@@ -138,6 +138,26 @@ jobs:
           ./scripts/config --file out/.config -e KSU -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
           make -C out ARCH=arm64 olddefconfig
           grep -E "CONFIG_KSU|CONFIG_TCP_CONG|CONFIG_WIREGUARD|CONFIG_ZRAM" out/.config || true
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("include/linux/cred.h")
+          t = p.read_text()
+          if "get_cred_rcu" not in t:
+              old = "static inline void put_cred"
+              new = ("static inline const struct cred *get_cred_rcu(const struct cred *cred)\n"
+                     "{\n"
+                     "\tstruct cred *nonconst_cred = (struct cred *) cred;\n"
+                     "\tif (!cred)\n\t\treturn NULL;\n"
+                     "\tif (!atomic_long_inc_not_zero(&nonconst_cred->usage))\n\t\treturn NULL;\n"
+                     "\tvalidate_creds(cred);\n"
+                     "\treturn cred;\n"
+                     "}\n\n" + old)
+              assert old in t, "put_cred anchor missing"
+              p.write_text(t.replace(old, new, 1))
+              print("cred.h get_cred_rcu (atomic_long) pre-seeded, Makefile auto-inject will skip")
+          else:
+              print("cred.h already has get_cred_rcu")
+          PY
           export KCFLAGS="-O3 -pipe -fno-plt -fno-addrsig"
           $MAKE_BASE KCFLAGS="$KCFLAGS"
           python3 build_kernel/bin/mkdtboimg.py cfg_create out/arch/arm64/boot/dtbo-m31.img build_kernel/configs/dtbo/m31.cfg -d out/arch/arm64/boot/dts/samsung

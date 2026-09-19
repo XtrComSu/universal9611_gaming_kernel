@@ -7,20 +7,13 @@ KROOT="$HOME/universal9611_gaming_kernel/kernel"
 echo "KROOT=$KROOT"
 cd "$KROOT"
 
-echo "=== [1/4] KernelSU-Next legacy ==="
-if [ ! -d KernelSU-Next ] && [ ! -d KernelSU ]; then
-  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+echo "=== [1/4] Official KernelSU (SUSFS-compatible) ==="
+if [ ! -d KernelSU ]; then
+  curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
 else
-  echo "KSU dir exists, skipping setup.sh"
+  echo "KernelSU/ exists, skipping setup.sh"
 fi
-if [ -d KernelSU-Next/kernel ]; then
-  KSU_DIR="KernelSU-Next"
-elif [ -d KernelSU/kernel ]; then
-  KSU_DIR="KernelSU"
-else
-  ls KernelSU-Next/kernel/ksu.c drivers/kernelsu 2>/dev/null || { echo "ERROR: KernelSU setup failed"; exit 1; }
-  KSU_DIR="KernelSU-Next"
-fi
+KSU_DIR="KernelSU"
 echo "KSU_DIR=$KSU_DIR"
 ls "$KSU_DIR/kernel/ksu.c" || { echo "ERROR: KernelSU setup failed"; exit 1; }
 

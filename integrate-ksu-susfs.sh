@@ -130,10 +130,13 @@ ok &= ensure_replace("fs/open.c",
   "ksu_handle_faccessat")
 p = pathlib.Path("fs/open.c"); t = p.read_text()
 if "ksu_handle_faccessat(&dfd" not in t:
+    anchor_fn = "SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)"
+    fi = t.find(anchor_fn)
     old = "\tunsigned int lookup_flags = LOOKUP_FOLLOW;"
+    fj = t.find(old, fi) if fi != -1 else -1
     new = "#ifdef CONFIG_KSU\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n\n\tunsigned int lookup_flags = LOOKUP_FOLLOW;"
-    if old in t:
-        p.write_text(t.replace(old, new, 1)); print("fs/open.c [faccessat call]: patched")
+    if fi != -1 and fj != -1:
+        p.write_text(t[:fj] + new + t[fj+len(old):]); print("fs/open.c [faccessat call]: patched")
     else:
         print("fs/open.c [faccessat call]: pattern not found"); ok=False
 else:
@@ -146,10 +149,13 @@ ok &= ensure_replace("fs/read_write.c",
   "ksu_handle_sys_read")
 p = pathlib.Path("fs/read_write.c"); t = p.read_text()
 if "ksu_handle_sys_read(fd" not in t:
+    anchor_fn = "SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)"
+    fi = t.find(anchor_fn)
     old = "\tstruct fd f = fdget_pos(fd);\n\tssize_t ret = -EBADF;"
+    fj = t.find(old, fi) if fi != -1 else -1
     new = "\tstruct fd f = fdget_pos(fd);\n\tssize_t ret = -EBADF;\n\n#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_sys_read(fd, &buf, &count);\n#endif"
-    if old in t:
-        p.write_text(t.replace(old, new, 1)); print("fs/read_write.c [read call]: patched")
+    if fi != -1 and fj != -1:
+        p.write_text(t[:fj] + new + t[fj+len(old):]); print("fs/read_write.c [read call]: patched")
     else:
         print("fs/read_write.c [read call]: pattern not found"); ok=False
 else:
@@ -162,10 +168,14 @@ ok &= ensure_replace("fs/stat.c",
   "ksu_handle_stat")
 p = pathlib.Path("fs/stat.c"); t = p.read_text()
 if "ksu_handle_stat(&dfd" not in t:
+    anchor_fn = "SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,"
+    fi = t.find(anchor_fn)
     old = "\tstruct kstat stat;\n\tint error;"
-    # only patch the newfstatat one (first occurrence after our decl) - replace first
-    if old in t:
-        p.write_text(t.replace(old, "\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif", 1)); print("fs/stat.c [stat call]: patched")
+    fj = t.find(old, fi) if fi != -1 else -1
+    # only patch the newfstatat one (first occurrence after our decl)
+    if fi != -1 and fj != -1:
+        ins = "\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif"
+        p.write_text(t[:fj] + ins + t[fj+len(old):]); print("fs/stat.c [stat call]: patched")
     else:
         print("fs/stat.c [stat call]: pattern not found"); ok=False
 else:

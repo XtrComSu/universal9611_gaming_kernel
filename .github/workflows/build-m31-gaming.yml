@@ -122,6 +122,21 @@ jobs:
           git checkout -- fs/namespace.c || true
           rm -f fs/namespace.c.rej
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("KernelSU/kernel/core_hook.c")
+          t = p.read_text()
+          anchor = "static inline void susfs_on_post_fs_data(void) {"
+          fi = t.find(anchor)
+          old = "\tstruct path path;"
+          fj = t.find(old, fi) if fi != -1 else -1
+          if fi != -1 and fj != -1 and "(void)path;" not in t[fi:fj+200]:
+              t = t[:fj] + old + "\n\t(void)path; /* silence -Wunused when SUS_MOUNT/AUTO_ADD off */" + t[fj+len(old):]
+              p.write_text(t)
+              print("core_hook.c unused-path fixup applied")
+          else:
+              print("core_hook.c already fine")
+          PY
 
       - name: Manual KSU hooks
         run: |

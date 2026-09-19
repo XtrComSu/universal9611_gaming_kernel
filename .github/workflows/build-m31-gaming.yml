@@ -103,6 +103,10 @@ jobs:
               print("selinux.c already has SUSFS helpers")
           PY
           patch -p1 --fuzz=3 < 50_susfs.patch || true
+          echo "=== DEBUG namespace head ==="
+          head -n 80 fs/namespace.c | cat -A || true
+          grep -n "susfs" fs/namespace.c | head -n 50 || true
+          ls -lh include/linux/susfs* || true
           python3 - <<'PY'
           import pathlib
           p = pathlib.Path("fs/namespace.c")
@@ -145,6 +149,9 @@ jobs:
           else:
               print("namespace.c already has SUSFS definitions")
           PY
+          echo "=== POST-FIXUP head ==="
+          head -n 80 fs/namespace.c | cat -A || true
+          grep -n "DEFINE_IDA" fs/namespace.c | head || true
           rm -f fs/namespace.c.rej
           # Ensure susfs_def.h fallback if missing (should be there via copy)
           if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi

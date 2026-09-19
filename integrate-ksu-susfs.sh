@@ -18,6 +18,9 @@ echo "KSU_DIR=$KSU_DIR"
 ls "$KSU_DIR/kernel/ksu.c" || { echo "ERROR: KernelSU setup failed"; exit 1; }
 
 echo "=== [2/4] SUSFS kernel-4.14 ==="
+if [ "${SKIP_SUSFS_PATCH:-0}" = "1" ]; then
+  echo "SKIP_SUSFS_PATCH=1, jumping to manual hooks"
+else
 rm -rf /tmp/susfs4ksu
 git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
 echo "SUSFS commit: $(git -C /tmp/susfs4ksu rev-parse --short HEAD)"
@@ -61,6 +64,7 @@ if [ "$SUSFS_OK" = "0" ]; then
   echo "Check *.rej files: git -C $KROOT status --porcelain | grep rej"
 fi
 echo "$SUSFS_OK" > /tmp/susfs_ok
+fi
 
 echo "=== [3/4] Manual KSU hooks (5 sites, idempotent) ==="
 python3 - <<'PY'

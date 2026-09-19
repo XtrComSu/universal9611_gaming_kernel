@@ -125,7 +125,7 @@ jobs:
 
       - name: Manual KSU hooks
         run: |
-          bash integrate-ksu-susfs.sh
+          SKIP_SUSFS_PATCH=1 bash integrate-ksu-susfs.sh
         # integrate script is idempotent; KSU+SUSFS already patched above so it will skip completed parts and apply 5 manual hooks
 
       - name: Build m31 gaming

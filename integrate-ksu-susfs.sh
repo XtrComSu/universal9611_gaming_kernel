@@ -134,7 +134,7 @@ if "ksu_handle_faccessat(&dfd" not in t:
     fi = t.find(anchor_fn)
     old = "\tunsigned int lookup_flags = LOOKUP_FOLLOW;"
     fj = t.find(old, fi) if fi != -1 else -1
-    new = "#ifdef CONFIG_KSU\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n\n\tunsigned int lookup_flags = LOOKUP_FOLLOW;"
+    new = "\tunsigned int lookup_flags = LOOKUP_FOLLOW;\n#ifdef CONFIG_KSU\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif"
     if fi != -1 and fj != -1:
         p.write_text(t[:fj] + new + t[fj+len(old):]); print("fs/open.c [faccessat call]: patched")
     else:

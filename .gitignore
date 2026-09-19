@@ -1,0 +1,8 @@
+# kernel source is cloned fresh in CI / WSL - do NOT push Windows checkout (aux.c issue + size)
+kernel/
+out/
+*.zip
+*.img
+toolchain/
+__pycache__/
+.tmp_versions/

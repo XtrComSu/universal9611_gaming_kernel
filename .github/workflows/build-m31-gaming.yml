@@ -1,0 +1,100 @@
+name: Build m31 Gaming KSU-SUSFS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - gaming.cfg
+      - integrate-ksu-susfs.sh
+      - .github/workflows/build-m31-gaming.yml
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout config repo
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y git curl wget python3 python3-pip bc bison flex \
+            build-essential clang llvm lld libssl-dev libelf-dev libncurses-dev \
+            dwarves cpio rsync unzip zip binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu device-tree-compiler \
+            ccache u-boot-tools
+
+      - name: Clone kernel (shallow, lineage-24.0)
+        run: |
+          git clone --depth 1 --branch lineage-24.0 https://github.com/Parbindar7/android_kernel_samsung_universal9611 kernel
+          git -C kernel rev-parse --short HEAD
+          git -C kernel ls-tree --name-only HEAD:arch/arm64/configs | grep 9611
+
+      - name: Toolchain (Proton Clang 13)
+        run: |
+          git clone --depth 1 https://github.com/kdrag0n/proton-clang /tmp/proton
+          mkdir -p kernel/toolchain
+          cp -a /tmp/proton/bin kernel/toolchain/
+          cp -a /tmp/proton/lib kernel/toolchain/ 2>/dev/null || true
+          cp -a /tmp/proton/include kernel/toolchain/ 2>/dev/null || true
+          kernel/toolchain/bin/clang --version | head -n1
+
+      - name: Integrate KernelSU-Next + SUSFS
+        working-directory: kernel
+        run: |
+          # KernelSU-Next legacy
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          ls KernelSU/kernel/ksu.c
+          # SUSFS kernel-4.14
+          rm -rf /tmp/susfs4ksu
+          git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
+          git -C /tmp/susfs4ksu rev-parse --short HEAD
+          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+          cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/
+          mkdir -p include/linux
+          cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
+          echo "SUSFS_PATCH=$SUSFS_PATCH"
+          cp -v "$SUSFS_PATCH" ./50_susfs.patch
+          cd KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch && cd ..
+          patch -p1 --fuzz=3 < 50_susfs.patch || (echo "SUSFS rejects:"; git status --porcelain | grep -i rej || true; exit 1)
+
+      - name: Manual KSU hooks
+        working-directory: kernel
+        run: |
+          bash ../integrate-ksu-susfs.sh
+        # integrate script is idempotent; KSU+SUSFS already patched above so it will skip completed parts and apply 5 manual hooks
+
+      - name: Build m31 gaming
+        working-directory: kernel
+        run: |
+          export PATH="$PWD/toolchain/bin:$PATH"
+          OUT="$PWD/out"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          JOBS=$(nproc)
+          MAKE_BASE="make O=out ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LD=ld.lld AS=llvm-as AR=llvm-ar OBJDUMP=llvm-objdump READELF=llvm-readelf NM=llvm-nm OBJCOPY=llvm-objcopy -j$JOBS"
+          $MAKE_BASE exynos9611-m31_defconfig
+          ./scripts/kconfig/merge_config.sh -m -O out out/.config ../gaming.cfg
+          make -C out ARCH=arm64 olddefconfig
+          ./scripts/config --file out/.config -e KSU -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
+          make -C out ARCH=arm64 olddefconfig
+          grep -E "CONFIG_KSU|CONFIG_TCP_CONG|CONFIG_WIREGUARD|CONFIG_ZRAM" out/.config || true
+          export KCFLAGS="-O3 -pipe -fno-plt -fno-addrsig"
+          $MAKE_BASE KCFLAGS="$KCFLAGS"
+          python3 build_kernel/bin/mkdtboimg.py cfg_create out/arch/arm64/boot/dtbo-m31.img build_kernel/configs/dtbo/m31.cfg -d out/arch/arm64/boot/dts/samsung
+          python3 build_kernel/bin/mkdtboimg.py cfg_create out/arch/arm64/boot/exynos9611.dtb build_kernel/configs/dtb/exynos9611.cfg --dtb-dir out/arch/arm64/boot/dts/exynos
+          cp -v out/arch/arm64/boot/Image AnyKernel3/Image
+          cp -v out/arch/arm64/boot/dtbo-m31.img AnyKernel3/dtbo.img
+          cp -v out/arch/arm64/boot/exynos9611.dtb AnyKernel3/dtb
+          DATE=$(date +%Y-%m-%d)
+          ZIP="Everline-GAMING-KSUN-SUSFS_m31_${DATE}.zip"
+          (cd AnyKernel3 && zip -r9 "../$ZIP" Image dtbo.img dtb META-INF tools anykernel.sh version)
+          rm -f AnyKernel3/Image AnyKernel3/dtbo.img AnyKernel3/dtb
+          ls -lh *.zip
+          echo "ZIP=$ZIP" >> $GITHUB_ENV
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Everline-GAMING-KSUN-SUSFS-m31
+          path: kernel/*.zip

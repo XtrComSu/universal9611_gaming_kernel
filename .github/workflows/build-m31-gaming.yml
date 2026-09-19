@@ -24,11 +24,15 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu device-tree-compiler \
             ccache u-boot-tools
 
-      - name: Clone kernel (shallow, lineage-24.0)
+      - name: Clone kernel (shallow, lineage-24.0-KSUN + submodules)
         run: |
-          git clone --depth 1 --branch lineage-24.0 https://github.com/Parbindar7/android_kernel_samsung_universal9611 kernel
+          git clone --depth 1 --branch lineage-24.0-KSUN --recurse-submodules --shallow-submodules https://github.com/Parbindar7/android_kernel_samsung_universal9611 kernel
           git -C kernel rev-parse --short HEAD
           git -C kernel ls-tree --name-only HEAD:arch/arm64/configs | grep 9611
+          ls kernel/KernelSU-Next/kernel/ksu.c
+          ls -l kernel/drivers/kernelsu || true
+          grep -c ksu_handle_execveat kernel/fs/exec.c
+          grep -c ksu_handle_faccessat kernel/fs/open.c
 
       - name: Toolchain (Proton Clang 13)
         run: |
@@ -39,19 +43,14 @@ jobs:
           cp -a /tmp/proton/include kernel/toolchain/ 2>/dev/null || true
           kernel/toolchain/bin/clang --version | head -n1
 
-      - name: Integrate KernelSU-Next + SUSFS
+      - name: SUSFS kernel-4.14 onto KSU-Next (pinned submodule)
         working-directory: kernel
         run: |
-          # Official KernelSU (matches simonpunk SUSFS kernel-4.14 base)
-          # Pin v0.9.5: last old-layout (KernelSU/kernel/ksu.c) before v1+/v3 GKI refactor
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
-          ls KernelSU/kernel/ksu.c
-          ls -l drivers/kernelsu || true
-          # SUSFS kernel-4.14
+          # KSU-Next already integrated by maintainer (hooks pre-applied) - SUSFS only
           rm -rf /tmp/susfs4ksu
           git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
           git -C /tmp/susfs4ksu rev-parse --short HEAD
-          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU-Next/
           cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/
           mkdir -p include/linux
           cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
@@ -59,74 +58,13 @@ jobs:
           SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
           echo "SUSFS_PATCH=$SUSFS_PATCH"
           cp -v "$SUSFS_PATCH" ./50_susfs.patch
-          cd KernelSU; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
-          python3 - <<'PY'
-          import pathlib
-          p = pathlib.Path("KernelSU/kernel/selinux/selinux.c")
-          t = p.read_text()
-          if "susfs_set_zygote_sid" not in t:
-              block = '''
-          #ifdef CONFIG_KSU_SUSFS
-          static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
-          {
-          \tint err;
-          \tif (!secctx_name || !out_sid) { pr_err("secctx_name || out_sid is NULL\\n"); return; }
-          \terr = security_secctx_to_secid(secctx_name, strlen(secctx_name), out_sid);
-          \tif (err) { pr_err("failed setting sid for '%s', err: %d\\n", secctx_name, err); return; }
-          \tpr_info("sid '%u' is set for secctx_name '%s'\\n", *out_sid, secctx_name);
-          }
-          bool susfs_is_sid_equal(void *sec, u32 sid2) {
-          \tstruct task_security_struct *tsec = (struct task_security_struct *)sec;
-          \tif (!tsec) return false;
-          \treturn tsec->sid == sid2;
-          }
-          u32 susfs_get_sid_from_name(const char *secctx_name)
-          {
-          \tu32 out_sid = 0;
-          \tif (!secctx_name) return 0;
-          \tif (security_secctx_to_secid(secctx_name, strlen(secctx_name), &out_sid)) return 0;
-          \treturn out_sid;
-          }
-          u32 susfs_get_current_sid(void) { return current_sid(); }
-          void susfs_set_zygote_sid(void) { susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid); }
-          bool susfs_is_current_zygote_domain(void) { return unlikely(current_sid() == susfs_zygote_sid); }
-          void susfs_set_ksu_sid(void) { susfs_set_sid(KERNEL_SU_DOMAIN, &susfs_ksu_sid); }
-          bool susfs_is_current_ksu_domain(void) { return unlikely(current_sid() == susfs_ksu_sid); }
-          void susfs_set_init_sid(void) { susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid); }
-          bool susfs_is_current_init_domain(void) { return unlikely(current_sid() == susfs_init_sid); }
-          #endif
-          '''
-              t = t.replace('#define DEVPTS_DOMAIN', block + '\n#define DEVPTS_DOMAIN', 1)
-              p.write_text(t)
-              print("selinux.c SUSFS fixup applied")
-          else:
-              print("selinux.c already has SUSFS helpers")
-          PY
+          cd KernelSU-Next; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
           patch -p1 --fuzz=3 < 50_susfs.patch || true
-          python3 - <<'PY'
-          import pathlib
-          p = pathlib.Path("fs/namespace.c")
-          t = p.read_text()
-          if "#include <linux/susfs.h>" not in t:
-              # insert after last #include line
-              lines = t.splitlines(True)
-              idx = max(i for i, l in enumerate(lines) if l.startswith("#include"))
-              lines.insert(idx+1, "#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n")
-              p.write_text("".join(lines))
-              print("namespace.c susfs include fixup applied")
-          else:
-              print("namespace.c already has susfs include")
-          PY
-          rm -f fs/namespace.c.rej
-          # SUS_MOUNT=n -> drop Samsung-incompatible namespace hunks entirely (stock file + Makefile auto-inject is enough)
+          rm -f fs/namespace.c.rej KernelSU-Next/kernel/selinux/selinux.c.rej
+          # SUS_MOUNT=n -> drop Samsung-incompatible namespace hunks entirely (stock file + KSU Makefile auto-inject is enough)
           git checkout -- fs/namespace.c || true
           rm -f fs/namespace.c.rej
-          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
-
-      - name: Manual KSU hooks
-        run: |
-          SKIP_SUSFS_PATCH=1 bash integrate-ksu-susfs.sh
-        # integrate script is idempotent; KSU+SUSFS already patched above so it will skip completed parts and apply 5 manual hooks
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; git diff --stat || true; fi
 
       - name: Build m31 gaming
         working-directory: kernel

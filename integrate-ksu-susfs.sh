@@ -26,6 +26,7 @@ cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/*.patch "$KSU_DIR/" || true
 cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/ || cp -v /tmp/susfs4ksu/kernel_patches/susfs.c fs/ || true
 mkdir -p include/linux
 cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || cp -v /tmp/susfs4ksu/kernel_patches/susfs.h include/linux/ || true
+cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/ 2>/dev/null || cp -v /tmp/susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
 # find 50 patch (name varies: 50_add_susfs_in_kernel-4.14.patch)
 SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || ls /tmp/susfs4ksu/kernel_patches/50_add*4.14*.patch 2>/dev/null | head -n1 || echo "")
 echo "SUSFS_PATCH=$SUSFS_PATCH"

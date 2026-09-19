@@ -108,17 +108,44 @@ jobs:
           grep -n "susfs" fs/namespace.c | head -n 50 || true
           ls -lh include/linux/susfs* || true
           python3 - <<'PY'
-          import pathlib, re
+          import pathlib
           p = pathlib.Path("fs/namespace.c")
           t = p.read_text()
-          has_top = t[:6000].count("DEFINE_IDA(susfs_mnt_id_ida)")
-          has_any = "DEFINE_IDA(susfs_mnt_id_ida)" in t
-          if has_any and not has_top:
-              print("namespace.c has misplaced SUSFS definitions (at 2312), removing and re-inserting at top")
-              t = re.sub(r"static DEFINE_IDA\(susfs_mnt_id_ida\);\nstatic DEFINE_IDA\(susfs_mnt_group_ida\);\nstatic int susfs_mnt_id_start.*?\nstatic int susfs_mnt_group_start.*?\n", "", t)
+          # Patch misplaces hunk 1 definitions at line ~2312 instead of top (Samsung offset)
+          # Detect and remove misplaced block, then ensure top block exists - robust line-based removal
+          lines = t.splitlines(True)
+          # Find and remove misplaced definitions that appear after first 5000 chars (too late)
+          new_lines = []
+          removed = 0
+          for i, l in enumerate(lines):
+              # Keep track of char position via cumulative
+              if "susfs_mnt_id_ida" in l and i > 100:
+                  # This is the misplaced definition, skip it and next 3 lines that belong to block
+                  # We remove this line and the next 3 lines if they contain the other defs
+                  removed += 1
+                  continue
+              if "susfs_mnt_group_ida" in l and i > 100:
+                  # Already counted? Check if previous was removed, need to handle block
+                  if removed and "DEFINE_IDA" in l:
+                      continue
+                  # For group ida, also skip
+                  if i > 100 and "DEFINE_IDA" in l:
+                      removed += 1
+                      continue
+              if "susfs_mnt_id_start" in l and i > 100 and "static int" in l:
+                  removed += 1
+                  continue
+              if "susfs_mnt_group_start" in l and i > 100 and "static int" in l:
+                  removed += 1
+                  continue
+              new_lines.append(l)
+          if removed:
+              print(f"Removed {removed} misplaced SUSFS definition lines from namespace.c")
+              t = "".join(new_lines)
               p.write_text(t)
-              t = p.read_text()
-              has_top = False
+          # Now ensure top block exists
+          t = p.read_text()
+          has_top = t[:6000].count("DEFINE_IDA(susfs_mnt_id_ida)")
           if not has_top:
               susfs_block = """#include <linux/susfs_def.h>
 

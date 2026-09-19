@@ -58,7 +58,49 @@ jobs:
           SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
           echo "SUSFS_PATCH=$SUSFS_PATCH"
           cp -v "$SUSFS_PATCH" ./50_susfs.patch
-          cd KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch && cd ..
+          cd KernelSU; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("KernelSU/kernel/selinux/selinux.c")
+          t = p.read_text()
+          if "susfs_set_zygote_sid" not in t:
+              block = '''
+          #ifdef CONFIG_KSU_SUSFS
+          static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
+          {
+          \tint err;
+          \tif (!secctx_name || !out_sid) { pr_err("secctx_name || out_sid is NULL\\n"); return; }
+          \terr = security_secctx_to_secid(secctx_name, strlen(secctx_name), out_sid);
+          \tif (err) { pr_err("failed setting sid for '%s', err: %d\\n", secctx_name, err); return; }
+          \tpr_info("sid '%u' is set for secctx_name '%s'\\n", *out_sid, secctx_name);
+          }
+          bool susfs_is_sid_equal(void *sec, u32 sid2) {
+          \tstruct task_security_struct *tsec = (struct task_security_struct *)sec;
+          \tif (!tsec) return false;
+          \treturn tsec->sid == sid2;
+          }
+          u32 susfs_get_sid_from_name(const char *secctx_name)
+          {
+          \tu32 out_sid = 0;
+          \tif (!secctx_name) return 0;
+          \tif (security_secctx_to_secid(secctx_name, strlen(secctx_name), &out_sid)) return 0;
+          \treturn out_sid;
+          }
+          u32 susfs_get_current_sid(void) { return current_sid(); }
+          void susfs_set_zygote_sid(void) { susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid); }
+          bool susfs_is_current_zygote_domain(void) { return unlikely(current_sid() == susfs_zygote_sid); }
+          void susfs_set_ksu_sid(void) { susfs_set_sid(KERNEL_SU_DOMAIN, &susfs_ksu_sid); }
+          bool susfs_is_current_ksu_domain(void) { return unlikely(current_sid() == susfs_ksu_sid); }
+          void susfs_set_init_sid(void) { susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid); }
+          bool susfs_is_current_init_domain(void) { return unlikely(current_sid() == susfs_init_sid); }
+          #endif
+          '''
+              t = t.replace('#define DEVPTS_DOMAIN', block + '\n#define DEVPTS_DOMAIN', 1)
+              p.write_text(t)
+              print("selinux.c SUSFS fixup applied")
+          else:
+              print("selinux.c already has SUSFS helpers")
+          PY
           patch -p1 --fuzz=3 < 50_susfs.patch || (echo "SUSFS rejects:"; git status --porcelain | grep -i rej || true; exit 1)
 
       - name: Manual KSU hooks

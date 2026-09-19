@@ -118,9 +118,6 @@ jobs:
               print("namespace.c already has susfs include")
           PY
           rm -f fs/namespace.c.rej
-          # SUS_MOUNT=n -> drop Samsung-incompatible namespace hunks entirely (stock file + Makefile auto-inject is enough)
-          git checkout -- fs/namespace.c || true
-          rm -f fs/namespace.c.rej
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
           python3 - <<'PY'
           import pathlib
@@ -140,8 +137,7 @@ jobs:
 
       - name: Manual KSU hooks
         run: |
-          SKIP_SUSFS_PATCH=1 bash integrate-ksu-susfs.sh
-        # integrate script is idempotent; KSU+SUSFS already patched above so it will skip completed parts and apply 5 manual hooks
+          echo "Skipping manual hooks for official KSU v0.9.5 (kprobe/LSM mode) - SUSFS already handles needed hooks"
 
       - name: Build m31 gaming
         working-directory: kernel

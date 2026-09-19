@@ -6,3 +6,7 @@ out/
 toolchain/
 __pycache__/
 .tmp_versions/
+ksu-tmp/
+susfs-tmp/
+build-log*.txt
+build-log2.txt

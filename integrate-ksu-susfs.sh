@@ -8,19 +8,28 @@ echo "KROOT=$KROOT"
 cd "$KROOT"
 
 echo "=== [1/4] KernelSU-Next legacy ==="
-if [ ! -d KernelSU ]; then
+if [ ! -d KernelSU-Next ] && [ ! -d KernelSU ]; then
   curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 else
-  echo "KernelSU/ exists, skipping setup.sh"
+  echo "KSU dir exists, skipping setup.sh"
 fi
-ls KernelSU/kernel/ksu.c || { echo "ERROR: KernelSU setup failed"; exit 1; }
+if [ -d KernelSU-Next/kernel ]; then
+  KSU_DIR="KernelSU-Next"
+elif [ -d KernelSU/kernel ]; then
+  KSU_DIR="KernelSU"
+else
+  ls KernelSU-Next/kernel/ksu.c drivers/kernelsu 2>/dev/null || { echo "ERROR: KernelSU setup failed"; exit 1; }
+  KSU_DIR="KernelSU-Next"
+fi
+echo "KSU_DIR=$KSU_DIR"
+ls "$KSU_DIR/kernel/ksu.c" || { echo "ERROR: KernelSU setup failed"; exit 1; }
 
 echo "=== [2/4] SUSFS kernel-4.14 ==="
 rm -rf /tmp/susfs4ksu
 git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
 echo "SUSFS commit: $(git -C /tmp/susfs4ksu rev-parse --short HEAD)"
-cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/ || \
-cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/*.patch KernelSU/ || true
+cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch "$KSU_DIR/" || \
+cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/*.patch "$KSU_DIR/" || true
 cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/ || cp -v /tmp/susfs4ksu/kernel_patches/susfs.c fs/ || true
 mkdir -p include/linux
 cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || cp -v /tmp/susfs4ksu/kernel_patches/susfs.h include/linux/ || true
@@ -30,7 +39,7 @@ echo "SUSFS_PATCH=$SUSFS_PATCH"
 if [ -n "$SUSFS_PATCH" ]; then cp -v "$SUSFS_PATCH" ./50_susfs.patch; fi
 
 echo "--- patch KernelSU for SUSFS ---"
-cd KernelSU
+cd "$KSU_DIR"
 if patch -p1 --dry-run < 10_enable_susfs_for_ksu.patch >/dev/null 2>&1; then
   patch -p1 < 10_enable_susfs_for_ksu.patch
   echo "KSU+SUSFS glue OK"

@@ -44,19 +44,20 @@ jobs:
         run: |
           # KernelSU-Next legacy
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-          ls KernelSU/kernel/ksu.c
+          ls KernelSU-Next/kernel/ksu.c
+          ls -l drivers/kernelsu
           # SUSFS kernel-4.14
           rm -rf /tmp/susfs4ksu
           git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
           git -C /tmp/susfs4ksu rev-parse --short HEAD
-          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU-Next/
           cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/
           mkdir -p include/linux
           cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
           SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
           echo "SUSFS_PATCH=$SUSFS_PATCH"
           cp -v "$SUSFS_PATCH" ./50_susfs.patch
-          cd KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch && cd ..
+          cd KernelSU-Next && patch -p1 < 10_enable_susfs_for_ksu.patch && cd ..
           patch -p1 --fuzz=3 < 50_susfs.patch || (echo "SUSFS rejects:"; git status --porcelain | grep -i rej || true; exit 1)
 
       - name: Manual KSU hooks

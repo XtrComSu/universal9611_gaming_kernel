@@ -43,7 +43,8 @@ jobs:
         working-directory: kernel
         run: |
           # Official KernelSU (matches simonpunk SUSFS kernel-4.14 base)
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
+          # Pin v0.9.5: last old-layout (KernelSU/kernel/ksu.c) before v1+/v3 GKI refactor
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
           ls KernelSU/kernel/ksu.c
           ls -l drivers/kernelsu || true
           # SUSFS kernel-4.14
@@ -88,7 +89,9 @@ jobs:
           cp -v out/arch/arm64/boot/dtbo-m31.img AnyKernel3/dtbo.img
           cp -v out/arch/arm64/boot/exynos9611.dtb AnyKernel3/dtb
           DATE=$(date +%Y-%m-%d)
-          ZIP="Everline-GAMING-KSUN-SUSFS_m31_${DATE}.zip"
+          ZIP="XT-Everest_m31_${DATE}.zip"
+          sed -i 's/kernel.string=.*/kernel.string=XT-Everest by XtrComSu/' AnyKernel3/anykernel.sh || true
+          grep kernel.string AnyKernel3/anykernel.sh || true
           (cd AnyKernel3 && zip -r9 "../$ZIP" Image dtbo.img dtb META-INF tools anykernel.sh version)
           rm -f AnyKernel3/Image AnyKernel3/dtbo.img AnyKernel3/dtb
           ls -lh *.zip
@@ -97,5 +100,5 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
-          name: Everline-GAMING-KSUN-SUSFS-m31
+          name: XT-Everest-m31
           path: kernel/*.zip

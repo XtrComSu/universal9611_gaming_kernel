@@ -69,7 +69,7 @@ cp -v "$OUT/arch/arm64/boot/exynos9611.dtb" "$AK3/dtb"
 KVER=$(grep -o '"[^"]*"' "$OUT/include/generated/utsrelease.h" | tr -d '"' | head -n1)
 KSU_VER=$(cat KernelSU/kernel/version 2>/dev/null || grep -r KSU_VERSION KernelSU 2>/dev/null | head -n1 || echo "KSUN")
 DATE=$(date +%Y-%m-%d)
-ZIP="Everline-GAMING-KSUN-SUSFS_${TARGET}_${DATE}.zip"
+ZIP="XT-Everest_${TARGET}_${DATE}.zip"
 (cd "$AK3" && zip -r9 "$KROOT/$ZIP" Image dtbo.img dtb META-INF tools anykernel.sh version)
 rm -f "$AK3/Image" "$AK3/dtbo.img" "$AK3/dtb"
 echo "=== DONE ==="

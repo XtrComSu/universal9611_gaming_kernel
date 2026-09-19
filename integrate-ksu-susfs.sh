@@ -9,7 +9,7 @@ cd "$KROOT"
 
 echo "=== [1/4] Official KernelSU (SUSFS-compatible) ==="
 if [ ! -d KernelSU ]; then
-  curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
+  curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 else
   echo "KernelSU/ exists, skipping setup.sh"
 fi

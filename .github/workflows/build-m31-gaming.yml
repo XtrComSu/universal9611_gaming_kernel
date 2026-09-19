@@ -108,13 +108,18 @@ jobs:
           grep -n "susfs" fs/namespace.c | head -n 50 || true
           ls -lh include/linux/susfs* || true
           python3 - <<'PY'
-          import pathlib
+          import pathlib, re
           p = pathlib.Path("fs/namespace.c")
           t = p.read_text()
-          if "DEFINE_IDA(susfs_mnt_id_ida)" not in t:
-              # Hunk 1 from 50_add_susfs_in_kernel-4.14.patch failed to apply due to Samsung's extra includes
-              # Insert the full SUSFS namespace header + definitions block after the last #include
-              # Mirrors the patch's @@ -27,10 +27,39 @@ block - make unconditional to ensure symbols exist regardless of Kconfig
+          has_top = t[:6000].count("DEFINE_IDA(susfs_mnt_id_ida)")
+          has_any = "DEFINE_IDA(susfs_mnt_id_ida)" in t
+          if has_any and not has_top:
+              print("namespace.c has misplaced SUSFS definitions (at 2312), removing and re-inserting at top")
+              t = re.sub(r"static DEFINE_IDA\(susfs_mnt_id_ida\);\nstatic DEFINE_IDA\(susfs_mnt_group_ida\);\nstatic int susfs_mnt_id_start.*?\nstatic int susfs_mnt_group_start.*?\n", "", t)
+              p.write_text(t)
+              t = p.read_text()
+              has_top = False
+          if not has_top:
               susfs_block = """#include <linux/susfs_def.h>
 
           extern bool susfs_is_current_ksu_domain(void);
@@ -147,12 +152,14 @@ jobs:
               p.write_text("".join(lines))
               print("namespace.c SUSFS definitions fixup applied (full hunk 1)")
           else:
-              print("namespace.c already has SUSFS definitions")
+              print("namespace.c already has SUSFS definitions at top")
           PY
-          echo "=== POST-FIXUP head ==="
-          head -n 80 fs/namespace.c | cat -A || true
-          grep -n "DEFINE_IDA" fs/namespace.c | head || true
+          echo "=== POST-FIXUP grep ==="
+          grep -n "DEFINE_IDA(susfs" fs/namespace.c | head
           rm -f fs/namespace.c.rej
+          # Ensure susfs_def.h fallback if missing (should be there via copy)
+          if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
           # Ensure susfs_def.h fallback if missing (should be there via copy)
           if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi

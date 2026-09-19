@@ -120,9 +120,8 @@ jobs:
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
 
       - name: Manual KSU hooks
-        working-directory: kernel
         run: |
-          bash ../integrate-ksu-susfs.sh
+          bash integrate-ksu-susfs.sh
         # integrate script is idempotent; KSU+SUSFS already patched above so it will skip completed parts and apply 5 manual hooks
 
       - name: Build m31 gaming

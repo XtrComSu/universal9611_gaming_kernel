@@ -110,10 +110,8 @@ jobs:
           if "susfs_mnt_id_ida" not in t:
               # Hunk 1 from 50_add_susfs_in_kernel-4.14.patch failed to apply due to Samsung's extra includes
               # Insert the full SUSFS namespace header + definitions block after the last #include
-              # Mirrors the patch's @@ -27,10 +27,39 @@ block
-              susfs_block = """#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
-          #include <linux/susfs_def.h>
-          #endif
+              # Mirrors the patch's @@ -27,10 +27,39 @@ block - make include unconditional to ensure DEFAULT_* defines available
+              susfs_block = """#include <linux/susfs_def.h>
 
           #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
           extern bool susfs_is_current_ksu_domain(void);
@@ -150,6 +148,8 @@ jobs:
               print("namespace.c already has SUSFS definitions")
           PY
           rm -f fs/namespace.c.rej
+          # Ensure susfs_def.h fallback if missing (should be there via copy)
+          if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
           python3 - <<'PY'
           import pathlib

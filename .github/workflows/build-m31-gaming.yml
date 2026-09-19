@@ -101,7 +101,23 @@ jobs:
           else:
               print("selinux.c already has SUSFS helpers")
           PY
-          patch -p1 --fuzz=3 < 50_susfs.patch || (echo "SUSFS rejects:"; git status --porcelain | grep -i rej || true; exit 1)
+          patch -p1 --fuzz=3 < 50_susfs.patch || true
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("fs/namespace.c")
+          t = p.read_text()
+          if "#include <linux/susfs.h>" not in t:
+              # insert after last #include line
+              lines = t.splitlines(True)
+              idx = max(i for i, l in enumerate(lines) if l.startswith("#include"))
+              lines.insert(idx+1, "#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n")
+              p.write_text("".join(lines))
+              print("namespace.c susfs include fixup applied")
+          else:
+              print("namespace.c already has susfs include")
+          PY
+          rm -f fs/namespace.c.rej
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
 
       - name: Manual KSU hooks
         working-directory: kernel

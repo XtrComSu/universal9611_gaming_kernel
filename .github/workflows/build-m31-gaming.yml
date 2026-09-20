@@ -47,11 +47,9 @@ jobs:
           ls KernelSU-Next/kernel/Kbuild || ls KernelSU-Next/kernel/Makefile
           ls -l drivers/kernelsu || true
           # SUSFS minimal (no namespace) for Samsung 4.14 - per SUSFS-SAMSUNG-GUIDE.md §4
-          # KSUN v3.2 needs next-susfs variant? We'll try standard kernel-4.14 patch and handle mismatches
           rm -rf /tmp/susfs4ksu
           git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
           git -C /tmp/susfs4ksu rev-parse --short HEAD
-          # Try Next-compatible patch first, fallback to standard
           if [ -f /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ]; then
             cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU-Next/ || cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./ 
           fi
@@ -62,18 +60,23 @@ jobs:
           SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
           echo "SUSFS_PATCH=$SUSFS_PATCH"
           cp -v "$SUSFS_PATCH" ./50_susfs.patch || true
-          # Try patching KSUN - handle both Next layout and legacy fallback
           if [ -d KernelSU-Next ]; then
             cd KernelSU-Next; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || echo "KSUN patch had fuzz/rejects, check manually"; cd ..
           elif [ -d KernelSU ]; then
             cd KernelSU; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
           fi
-          # Apply 50 patch but immediately revert namespace.c to stock (mount features disabled via susfs-minimal.cfg)
           patch -p1 --fuzz=3 < 50_susfs.patch || true
           git checkout -- fs/namespace.c || true
           rm -f fs/namespace.c.rej
           if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain (non-namespace):"; git status --porcelain | grep -i rej; git diff --stat | head -n 30; fi
-          echo "KSUN v3.2 + SUSFS minimal integrated (namespace reverted)"
+          echo "KSUN v3.2-legacy + SUSFS minimal integrated (namespace reverted)"
+
+      - name: Manual hooks for KSUN legacy (4.14)
+        run: |
+          # Next legacy requires manual hooks (Kbuild:142)
+          bash integrate-ksu-susfs.sh
+          # Ensure manual hook Kconfig is enabled for Next legacy
+          echo "Manual hooks applied, check for MANAGEMENT: grep ksu_handle fs/*.c"
 
       - name: Build m31 gaming
         working-directory: kernel
@@ -87,8 +90,9 @@ jobs:
           ./scripts/kconfig/merge_config.sh -m -O out out/.config ../gaming.cfg
           ./scripts/kconfig/merge_config.sh -m -O out out/.config ../susfs-minimal.cfg
           make -C out ARCH=arm64 olddefconfig
-          ./scripts/config --file out/.config -e KSU -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
+          ./scripts/config --file out/.config -e KSU -e KSU_MANUAL_HOOK -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
           ./scripts/config --file out/.config -d KSU_SUSFS_SUS_MOUNT -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT -d KSU_SUSFS_TRY_UMOUNT -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT || true
+          ./scripts/config --file out/.config -d KSU_KPROBES_HOOK || true
           make -C out ARCH=arm64 olddefconfig
           grep -E "CONFIG_KSU|CONFIG_TCP_CONG|CONFIG_WIREGUARD|CONFIG_ZRAM" out/.config || true
           python3 - <<'PY'

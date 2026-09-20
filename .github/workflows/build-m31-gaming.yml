@@ -45,7 +45,25 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
           ls KernelSU/kernel/ksu.c
           ls -l drivers/kernelsu || true
-          echo "KSU v0.9.5 integrated, SUSFS skipped for green build"
+          # SUSFS minimal (no namespace) - re-enable per SUSFS-SAMSUNG-GUIDE.md §4
+          rm -rf /tmp/susfs4ksu
+          git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
+          git -C /tmp/susfs4ksu rev-parse --short HEAD
+          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+          cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/
+          mkdir -p include/linux
+          cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/ 2>/dev/null || cp -v /tmp/susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
+          SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
+          echo "SUSFS_PATCH=$SUSFS_PATCH"
+          cp -v "$SUSFS_PATCH" ./50_susfs.patch
+          cd KernelSU; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
+          # Apply 50 patch but immediately revert namespace.c to stock (mount features disabled via susfs-minimal.cfg)
+          patch -p1 --fuzz=3 < 50_susfs.patch || true
+          git checkout -- fs/namespace.c || true
+          rm -f fs/namespace.c.rej
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain (non-namespace):"; git status --porcelain | grep -i rej; git diff --stat | head -n 30; fi
+          echo "SUSFS minimal integrated (namespace reverted)"
 
       - name: Build m31 gaming
         working-directory: kernel
@@ -57,8 +75,10 @@ jobs:
           MAKE_BASE="make O=out ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LD=ld.lld AS=llvm-as AR=llvm-ar OBJDUMP=llvm-objdump READELF=llvm-readelf NM=llvm-nm OBJCOPY=llvm-objcopy -j$JOBS"
           $MAKE_BASE exynos9611-m31_defconfig
           ./scripts/kconfig/merge_config.sh -m -O out out/.config ../gaming.cfg
+          ./scripts/kconfig/merge_config.sh -m -O out out/.config ../susfs-minimal.cfg
           make -C out ARCH=arm64 olddefconfig
-          ./scripts/config --file out/.config -e KSU -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
+          ./scripts/config --file out/.config -e KSU -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
+          ./scripts/config --file out/.config -d KSU_SUSFS_SUS_MOUNT -d KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT -d KSU_SUSFS_TRY_UMOUNT -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT || true
           make -C out ARCH=arm64 olddefconfig
           grep -E "CONFIG_KSU|CONFIG_TCP_CONG|CONFIG_WIREGUARD|CONFIG_ZRAM" out/.config || true
           python3 - <<'PY'

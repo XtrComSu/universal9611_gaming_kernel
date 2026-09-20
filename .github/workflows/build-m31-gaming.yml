@@ -42,9 +42,8 @@ jobs:
       - name: Integrate KernelSU-Next v3.2 + SUSFS minimal
         working-directory: kernel
         run: |
-          # KSUN v3.2 (Next) - requires new layout (drivers/kernelsu symlink), not legacy KernelSU/kernel
-          # Use Next's setup.sh with v3.2.0 tag
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.2.0
+          # KSUN v3.2-legacy for 4.14 Samsung - v3.2.0 is for 5.10+ only (syscall_fn_t error)
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.2.0-legacy
           ls KernelSU-Next/kernel/Kbuild || ls KernelSU-Next/kernel/Makefile
           ls -l drivers/kernelsu || true
           # SUSFS minimal (no namespace) for Samsung 4.14 - per SUSFS-SAMSUNG-GUIDE.md §4

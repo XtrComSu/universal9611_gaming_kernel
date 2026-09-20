@@ -63,7 +63,18 @@ This doc consolidates public SUSFS+Samsung guides, why the generic `50_add_susfs
 ## 4. Verified Retry Plan for `XT-Everest` (Next Build)
 
 1. **Base stays:** `lineage-24.0` + `KSU v0.9.5` (we already have green `XT-Everest_m31_2026-09-19.zip` `18.5 MB` without SUSFS).
-2. **SUSFS selective:** Enable only features that **don’t** touch `fs/namespace.c`:
+2. **SUSFS FULL (official v0.9.5 + simonpunk kernel-4.14):**
+   ```
+   CONFIG_KSU_SUSFS=y
+   CONFIG_KSU_SUSFS_SUS_PATH=y / SUS_MOUNT=y / SUS_KSTAT=y
+   CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y / AUTO_ADD_SUS_BIND_MOUNT=y
+   CONFIG_KSU_SUSFS_SPOOF_UNAME=y / SPOOF_CMDLINE_OR_BOOTCONFIG=y / OPEN_REDIRECT=y
+   CONFIG_KSU_SUSFS_TRY_UMOUNT=n (ksu_try_umount 4-arg missing on v0.9.5)
+   ```
+   `fs/namespace.c` hunk-1 misplaces at `~2312` (Samsung offset) → workflow removes misplaced
+   `DEFINE_IDA` block and re-inserts the full block at top after last `#include`.
+   `cred.h` pre-seeds `atomic_long` `get_cred_rcu` so the Makefile auto-inject skips.
+   No Next-style manual hooks (official kprobe/LSM mode — those caused `ld.lld` undefined symbols).
    ```
    CONFIG_KSU_SUSFS=y
    CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -86,6 +97,12 @@ This doc consolidates public SUSFS+Samsung guides, why the generic `50_add_susfs
 
 If minimal SUSFS passes, we can re-enable mount hiding via WildKernels’ `fix_namespace.c.patch` style (20-line version) ported to `4.14` 9611, rather than the 300-line upstream version.
 
+> **UPDATE — going FULL instead of minimal:** minimal was a dead end for mount hiding and the
+> namespace fixups are now robust (remove misplaced `DEFINE_IDA` block at `~2312`, re-insert full
+> hunk-1 at top). `susfs-minimal.cfg` deleted; `gaming.cfg` carries FULL SUSFS with only
+> `TRY_UMOUNT=n` (missing `ksu_try_umount` on `v0.9.5`). `SKIP_SUSFS_PATCH=1` in Manual step
+> prevents double-patching. No Next-style manual hooks (official kprobe/LSM mode).
+
 ---
 
 ## 5. References
@@ -104,4 +121,4 @@ If minimal SUSFS passes, we can re-enable mount hiding via WildKernels’ `fix_n
 ## 6. Current Artifact
 
 - `XT-Everest_m31_2026-09-19.zip` @ `C:\Users\Etheshamul\Downloads\universal9611_gaming_kernel\XT-Everest-m31\XT-Everest-m31\` (AnyKernel3, Image+dtbo+dtb, `kernel.string=XT-Everest by XtrComSu`)
-- Next: `susfs-minimal` build as above.
+- Next: FULL SUSFS build (all-in, see §4 update).

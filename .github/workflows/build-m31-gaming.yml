@@ -39,17 +39,164 @@ jobs:
           cp -a /tmp/proton/include kernel/toolchain/ 2>/dev/null || true
           kernel/toolchain/bin/clang --version | head -n1
 
-      - name: Integrate KernelSU-Next v3.2-legacy
+      - name: Integrate KernelSU-Next + SUSFS
         working-directory: kernel
         run: |
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.2.0-legacy
-          ls KernelSU-Next/kernel/Kbuild || ls KernelSU-Next/kernel/Makefile
+          # Official KernelSU (matches simonpunk SUSFS kernel-4.14 base)
+          # Pin v0.9.5: last old-layout (KernelSU/kernel/ksu.c) before v1+/v3 GKI refactor
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+          ls KernelSU/kernel/ksu.c
           ls -l drivers/kernelsu || true
-          echo "KSUN v3.2-legacy integrated"
+          # SUSFS kernel-4.14
+          rm -rf /tmp/susfs4ksu
+          git clone --depth 1 --branch kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
+          git -C /tmp/susfs4ksu rev-parse --short HEAD
+          cp -v /tmp/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+          cp -v /tmp/susfs4ksu/kernel_patches/fs/susfs.c fs/
+          mkdir -p include/linux
+          cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp -v /tmp/susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/ 2>/dev/null || cp -v /tmp/susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
+          SUSFS_PATCH=$(ls /tmp/susfs4ksu/kernel_patches/50_add_susfs_in_kernel*4.14*.patch 2>/dev/null | head -n1 || echo "")
+          echo "SUSFS_PATCH=$SUSFS_PATCH"
+          cp -v "$SUSFS_PATCH" ./50_susfs.patch
+          cd KernelSU; patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true; cd ..
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("KernelSU/kernel/selinux/selinux.c")
+          t = p.read_text()
+          if "susfs_set_zygote_sid" not in t:
+              block = '''
+          #ifdef CONFIG_KSU_SUSFS
+          static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
+          {
+          \tint err;
+          \tif (!secctx_name || !out_sid) { pr_err("secctx_name || out_sid is NULL\\n"); return; }
+          \terr = security_secctx_to_secid(secctx_name, strlen(secctx_name), out_sid);
+          \tif (err) { pr_err("failed setting sid for '%s', err: %d\\n", secctx_name, err); return; }
+          \tpr_info("sid '%u' is set for secctx_name '%s'\\n", *out_sid, secctx_name);
+          }
+          bool susfs_is_sid_equal(void *sec, u32 sid2) {
+          \tstruct task_security_struct *tsec = (struct task_security_struct *)sec;
+          \tif (!tsec) return false;
+          \treturn tsec->sid == sid2;
+          }
+          u32 susfs_get_sid_from_name(const char *secctx_name)
+          {
+          \tu32 out_sid = 0;
+          \tif (!secctx_name) return 0;
+          \tif (security_secctx_to_secid(secctx_name, strlen(secctx_name), &out_sid)) return 0;
+          \treturn out_sid;
+          }
+          u32 susfs_get_current_sid(void) { return current_sid(); }
+          void susfs_set_zygote_sid(void) { susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid); }
+          bool susfs_is_current_zygote_domain(void) { return unlikely(current_sid() == susfs_zygote_sid); }
+          void susfs_set_ksu_sid(void) { susfs_set_sid(KERNEL_SU_DOMAIN, &susfs_ksu_sid); }
+          bool susfs_is_current_ksu_domain(void) { return unlikely(current_sid() == susfs_ksu_sid); }
+          void susfs_set_init_sid(void) { susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid); }
+          bool susfs_is_current_init_domain(void) { return unlikely(current_sid() == susfs_init_sid); }
+          #endif
+          '''
+              t = t.replace('#define DEVPTS_DOMAIN', block + '\n#define DEVPTS_DOMAIN', 1)
+              p.write_text(t)
+              print("selinux.c SUSFS fixup applied")
+          else:
+              print("selinux.c already has SUSFS helpers")
+          PY
+          patch -p1 --fuzz=3 < 50_susfs.patch || true
+          echo "=== DEBUG namespace head ==="
+          head -n 80 fs/namespace.c | cat -A || true
+          grep -n "susfs" fs/namespace.c | head -n 50 || true
+          ls -lh include/linux/susfs* || true
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("fs/namespace.c")
+          t = p.read_text()
+          # Aggressive clean: remove any SUSFS definitions that appear after line 100 (misplaced due to patch offset)
+          # Then ensure correct top block
+          lines = t.splitlines(True)
+          new_lines = []
+          removed = 0
+          for i, l in enumerate(lines):
+              if i > 100 and any(x in l for x in ["susfs_mnt_id_ida", "susfs_mnt_group_ida", "susfs_mnt_id_start", "susfs_mnt_group_start", "susfs_is_current_ksu_domain", "susfs_is_current_zygote_domain", "CL_ZYGOTE_COPY_MNT_NS", "CL_COPY_MNT_NS", "susfs_auto_add"]):
+                  # Skip SUSFS infrastructure lines that are misplaced after top
+                  # Keep the actual usage sites (e.g., calls at 1392, 273) - they contain susfs_is_current but are calls, not defs
+                  # So only skip definitions/externs, not calls
+                  if any(y in l for y in ["extern bool susfs_is_current", "DEFINE_IDA", "static int susfs_mnt", "#define CL_ZYGOTE", "#define CL_COPY", "extern void susfs_auto", "bool susfs_is_auto"]):
+                      removed += 1
+                      continue
+              new_lines.append(l)
+          if removed:
+              print(f"Removed {removed} misplaced SUSFS definition lines from namespace.c")
+              t = "".join(new_lines)
+              p.write_text(t)
+          # Now ensure top block exists
+          t = p.read_text()
+          has_top = t[:8000].count("DEFINE_IDA(susfs_mnt_id_ida)")
+          if not has_top:
+              susfs_block = """#include <linux/susfs_def.h>
 
-      - name: Manual hooks for KSUN legacy (4.14)
+          extern bool susfs_is_current_ksu_domain(void);
+          extern bool susfs_is_current_zygote_domain(void);
+
+          static DEFINE_IDA(susfs_mnt_id_ida);
+          static DEFINE_IDA(susfs_mnt_group_ida);
+          static int susfs_mnt_id_start = DEFAULT_SUS_MNT_ID;
+          static int susfs_mnt_group_start = DEFAULT_SUS_MNT_GROUP_ID;
+
+          #define CL_ZYGOTE_COPY_MNT_NS BIT(24) /* used by copy_mnt_ns() */
+          #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
+
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          extern void susfs_auto_add_sus_ksu_default_mount(const char __user *to_pathname);
+          bool susfs_is_auto_add_sus_ksu_default_mount_enabled = true;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+          extern int susfs_auto_add_sus_bind_mount(const char *pathname, struct path *path_target);
+          bool susfs_is_auto_add_sus_bind_mount_enabled = true;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+          extern void susfs_auto_add_try_umount_for_bind_mount(struct path *path);
+          bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;
+          #endif
+          """
+              lines = t.splitlines(True)
+              idx = max(i for i, l in enumerate(lines) if l.startswith("#include"))
+              lines.insert(idx+1, susfs_block + "\n")
+              p.write_text("".join(lines))
+              print("namespace.c SUSFS definitions fixup applied (full hunk 1)")
+          else:
+              print("namespace.c already has SUSFS definitions at top")
+          PY
+          echo "=== POST-FIXUP grep ==="
+          grep -n "DEFINE_IDA(susfs" fs/namespace.c | head
+          # Also ensure susfs_def.h is included before first use - if our block's include is filtered, force it
+          if ! grep -q "susfs_def.h" fs/namespace.c; then echo "WARN no susfs_def.h include"; fi
+          rm -f fs/namespace.c.rej
+          # Ensure susfs_def.h fallback if missing (should be there via copy)
+          if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
+          # Ensure susfs_def.h fallback if missing (should be there via copy)
+          if [ ! -f include/linux/susfs_def.h ]; then echo "WARN susfs_def.h missing"; ls include/linux/ | head; fi
+          if git status --porcelain | grep -i '\.rej'; then echo "SUSFS rejects remain:"; git status --porcelain | grep -i rej; exit 1; fi
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("KernelSU/kernel/core_hook.c")
+          t = p.read_text()
+          anchor = "static inline void susfs_on_post_fs_data(void) {"
+          fi = t.find(anchor)
+          old = "\tstruct path path;"
+          fj = t.find(old, fi) if fi != -1 else -1
+          if fi != -1 and fj != -1 and "(void)path;" not in t[fi:fj+200]:
+              t = t[:fj] + old + "\n\t(void)path; /* silence -Wunused when SUS_MOUNT/AUTO_ADD off */" + t[fj+len(old):]
+              p.write_text(t)
+              print("core_hook.c unused-path fixup applied")
+          else:
+              print("core_hook.c already fine")
+          PY
+
+      - name: Manual KSU hooks
         run: |
-          bash integrate-ksu-susfs.sh
+          echo "Skipping manual hooks for official KSU v0.9.5 (kprobe/LSM mode) - SUSFS already handles needed hooks"
 
       - name: Build m31 gaming
         working-directory: kernel
@@ -62,8 +209,8 @@ jobs:
           $MAKE_BASE exynos9611-m31_defconfig
           ./scripts/kconfig/merge_config.sh -m -O out out/.config ../gaming.cfg
           make -C out ARCH=arm64 olddefconfig
-          ./scripts/config --file out/.config -e KSU -e KSU_MANUAL_HOOK -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
-          ./scripts/config --file out/.config -d KSU_KPROBES_HOOK || true
+          ./scripts/config --file out/.config -e KSU -e KSU_SUSFS -e KPROBES -e TCP_CONG_BBR -e WIREGUARD -e ZRAM || true
+          ./scripts/config --file out/.config -d KSU_SUSFS_TRY_UMOUNT -d KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT || true
           make -C out ARCH=arm64 olddefconfig
           grep -E "CONFIG_KSU|CONFIG_TCP_CONG|CONFIG_WIREGUARD|CONFIG_ZRAM" out/.config || true
           python3 - <<'PY'
@@ -82,7 +229,7 @@ jobs:
                      "}\n\n" + old)
               assert old in t, "put_cred anchor missing"
               p.write_text(t.replace(old, new, 1))
-              print("cred.h get_cred_rcu (atomic_long) pre-seeded")
+              print("cred.h get_cred_rcu (atomic_long) pre-seeded, Makefile auto-inject will skip")
           else:
               print("cred.h already has get_cred_rcu")
           PY
@@ -95,7 +242,7 @@ jobs:
           cp -v out/arch/arm64/boot/exynos9611.dtb AnyKernel3/dtb
           DATE=$(date +%Y-%m-%d)
           ZIP="XT-Everest_m31_${DATE}.zip"
-          sed -i 's/kernel.string=.*/kernel.string=XT-Everest KSUN v3.2 by XtrComSu/' AnyKernel3/anykernel.sh || true
+          sed -i 's/kernel.string=.*/kernel.string=XT-Everest by XtrComSu/' AnyKernel3/anykernel.sh || true
           grep kernel.string AnyKernel3/anykernel.sh || true
           (cd AnyKernel3 && zip -r9 "../$ZIP" Image dtbo.img dtb META-INF tools anykernel.sh version)
           rm -f AnyKernel3/Image AnyKernel3/dtbo.img AnyKernel3/dtb
